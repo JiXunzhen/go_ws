@@ -1,0 +1,1 @@
+Inited project of go

@@ -1,0 +1,6 @@
+# common
+.DS_Store
+.idea
+.envrc
+.rsync_ignore
+
