@@ -4,10 +4,14 @@ import "context"
 
 // Sectioner ...
 type Sectioner interface {
-	Text(context.Context) (string, error)
-	GetPre(context.Context) (Sectioner, error)
-	GetNext(context.Context) (Sectioner, error)
+	GetText(context.Context) (string, error)
+	Load(context.Context) error
+	GetPre(context.Context) Sectioner
+	GetNext(context.Context) Sectioner
 	SetPre(context.Context, Sectioner)
 	SetNext(context.Context, Sectioner)
-	GetCatalog(context.Context) (Cataloger, error)
+	GetCatalog(context.Context) Cataloger
+	GetIndex(context.Context) int
+	GetBody(context.Context) (string, error)
+	SetCatalog(ctx context.Context, catalog Cataloger)
 }

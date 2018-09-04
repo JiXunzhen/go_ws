@@ -3,6 +3,7 @@ package biquge
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/JiXunzhen/go_ws/novel_fetcher/base"
@@ -16,8 +17,6 @@ type Catalog struct {
 	sections []base.Sectioner
 	bookName string
 	client   *http.Client
-	preload  int
-	loaded   int
 }
 
 // Count ...
@@ -69,18 +68,12 @@ func (c *Catalog) Flush(ctx context.Context, withoutCache bool) error {
 			// log
 			return
 		}
-		url, exist := sectionNode.Attr("href")
+		uri, exist := sectionNode.Attr("href")
 		if !exist {
 			// log
 			return
 		}
-		c.sections = append(c.sections, &Section{
-			name:     html,
-			url:      url,
-			bookName: c.bookName,
-			catalog:  c,
-			index:    i,
-		})
+		c.sections = append(c.sections, NewFromURL(ctx, html, uri, c.bookName, c, i))
 	})
 	for i, j := startIndex, startIndex+1; j < len(c.sections); i, j = j, j+1 {
 		c.sections[i].SetNext(ctx, c.sections[j])
@@ -90,13 +83,62 @@ func (c *Catalog) Flush(ctx context.Context, withoutCache bool) error {
 }
 
 // Save ...
-func (c *Catalog) Save(ctx context.Context, start, end int) error {
+func (c *Catalog) Save(ctx context.Context, start, end int, source base.NovelSource) error {
+	remaining := c.sections[start:end]
+	fails := []int{}
+	for i := 0; i < base.SaveRetry; i++ {
+		fails = source.Save(ctx, c.bookName, remaining)
+		if len(fails) == 0 {
+			break
+		}
+		remaining = make([]base.Sectioner, 0, len(fails))
+		for _, fail := range fails {
+			remaining = append(remaining, c.sections[fail])
+		}
+	}
+
+	if len(fails) != 0 {
+		return fmt.Errorf("sections not saved: %v", fails)
+
+	}
+
 	return nil
 }
 
-// SetPreLoad ...
-func (c *Catalog) SetPreLoad(_ context.Context, preload int) {
-	c.preload = preload
+// LoadFromSource 必须在Flush后使用
+func (c *Catalog) LoadFromSource(ctx context.Context, source base.NovelSource) error {
+	bodies, err := source.Load(ctx, c.bookName)
+	if err != nil {
+		return err
+	}
+	for _, body := range bodies {
+		section, err := NewFromBody(ctx, body)
+		if err != nil {
+			// NOTE log
+			continue
+		}
+		c.UpdateSection(ctx, section)
+	}
+	return nil
+}
+
+// UpdateSection ...
+func (c *Catalog) UpdateSection(ctx context.Context, section base.Sectioner) error {
+	index := section.GetIndex(ctx)
+	if index >= len(c.sections) {
+		return errors.New("out of section range")
+	}
+
+	section.SetCatalog(ctx, c)
+	if index > 0 {
+		section.SetPre(ctx, c.sections[index-1])
+		c.sections[index-1].SetNext(ctx, section)
+	}
+	if index < len(c.sections)-1 {
+		section.SetNext(ctx, c.sections[index+1])
+		c.sections[index+1].SetPre(ctx, section)
+	}
+	return nil
 }
 
 // NewCatalog ...
@@ -105,8 +147,6 @@ func NewCatalog(ctx context.Context, req *http.Request, bookName string) (base.C
 		request:  req,
 		bookName: bookName,
 		client:   &http.Client{},
-		preload:  base.DefaultPreload,
-		loaded:   0,
 	}
 	err := c.Flush(ctx, false)
 	return c, err

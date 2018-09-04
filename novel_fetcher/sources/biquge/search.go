@@ -2,7 +2,6 @@ package biquge
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -28,7 +27,7 @@ func (s *Entrance) Search(ctx context.Context, name string) (base.Cataloger, err
 	formValues := url.Values{
 		"searchkey": {utils.Convert(name, utils.Utf8ToGbk)},
 	}
-	request, err := http.NewRequest("POST", fmt.Sprintf("%s%s", Domain, SearchURI), strings.NewReader(formValues.Encode()))
+	request, err := http.NewRequest("POST", utils.GenerateURL(Domain, SearchURI), strings.NewReader(formValues.Encode()))
 	if err != nil {
 		return nil, err
 	}
