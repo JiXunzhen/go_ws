@@ -5,10 +5,17 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/JiXunzhen/go_ws/novel_fetcher/base"
 	"github.com/JiXunzhen/go_ws/novel_fetcher/utils"
 	"github.com/PuerkitoBio/goquery"
+)
+
+const (
+	// LoadConcurrent 加载并发数
+	LoadConcurrent = 5
 )
 
 // Catalog ...
@@ -139,6 +146,66 @@ func (c *Catalog) UpdateSection(ctx context.Context, section base.Sectioner) err
 		c.sections[index+1].SetPre(ctx, section)
 	}
 	return nil
+}
+
+// Load ...
+func (c *Catalog) Load(ctx context.Context, start, end int) error {
+	errs := c.stepLoad(ctx, c.sections[start:end])
+	_ = errs
+	return nil
+}
+
+func (c *Catalog) stepLoad(ctx context.Context, sections []base.Sectioner) error {
+	sectionChan := make(chan base.Sectioner)
+	errChan := make(chan error)
+
+	errs := make([]error, 0, len(sections))
+	finished := &sync.WaitGroup{}
+	finished.Add(LoadConcurrent)
+
+	// go for work
+	for i := 0; i < LoadConcurrent; i++ {
+		go func(i int) {
+			defer finished.Done()
+
+			for section := range sectionChan {
+				err := section.Load(ctx)
+				if err != nil {
+					errChan <- fmt.Errorf("index: %d, %v", section.GetIndex(ctx), err)
+				}
+
+				// sleep for 0.5s
+				time.Sleep(500 * time.Millisecond)
+			}
+		}(i)
+	}
+	// err collect
+	go func() {
+		for err := range errChan {
+			errs = append(errs, err)
+		}
+	}()
+
+	// send works
+	for _, section := range sections {
+		sectionChan <- section
+	}
+	close(sectionChan)
+
+	// wait for work
+	finished.Wait()
+
+	// handle errs
+	close(errChan)
+	if len(errs) > 0 {
+		return fmt.Errorf("%v", errs)
+	}
+	return nil
+}
+
+// GetBookName ...
+func (c *Catalog) GetBookName() string {
+	return c.bookName
 }
 
 // NewCatalog ...

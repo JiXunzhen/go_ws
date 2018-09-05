@@ -36,6 +36,11 @@ func (s *Entrance) Search(ctx context.Context, name string) (base.Cataloger, err
 	return NewCatalog(ctx, request, name)
 }
 
+// Name ...
+func (s *Entrance) Name() string {
+	return "笔趣阁"
+}
+
 // NewSearcher ...
 func NewSearcher(_ context.Context) base.Searcher {
 	return &Entrance{}

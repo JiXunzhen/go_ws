@@ -9,6 +9,8 @@ type Cataloger interface {
 	Flush(context.Context, bool) error
 	Save(ctx context.Context, start, end int, source NovelSource) error
 	LoadFromSource(context.Context, NovelSource) error
+	Load(ctx context.Context, start, end int) error
+	GetBookName() string
 }
 
 const (
