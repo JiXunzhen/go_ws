@@ -18,12 +18,12 @@ func TestSearch(t *testing.T) {
 	assert.NoError(t, err)
 	fmt.Println(err)
 	if err == nil {
-		fmt.Println(catalog.Count(ctx))
+		fmt.Println(catalog.Count())
 		section, err := catalog.Get(ctx, 1110)
 		assert.NoError(t, err)
 		fmt.Println(section.GetText(ctx))
-		fmt.Println(section.GetNext(ctx))
-		fmt.Println(section.GetPre(ctx))
+		fmt.Println(section.GetNext())
+		fmt.Println(section.GetPre())
 	}
 }
 

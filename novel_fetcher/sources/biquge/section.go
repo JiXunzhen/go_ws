@@ -26,6 +26,31 @@ type Section struct {
 	loaded  bool
 }
 
+// GetPre ...
+func (s *Section) GetPre() base.Sectioner {
+	return s.pre
+}
+
+// GetNext ...
+func (s *Section) GetNext() base.Sectioner {
+	return s.next
+}
+
+// GetCatalog ...
+func (s *Section) GetCatalog() base.Cataloger {
+	return s.catalog
+}
+
+// GetIndex ...
+func (s *Section) GetIndex() int {
+	return s.Index
+}
+
+// GetName ...
+func (s *Section) GetName() string {
+	return s.Name
+}
+
 // GetText ...
 func (s *Section) GetText(ctx context.Context) (string, error) {
 	if s.loaded {
@@ -33,6 +58,16 @@ func (s *Section) GetText(ctx context.Context) (string, error) {
 	}
 	err := s.Load(ctx)
 	return s.Text, err
+}
+
+// GetBody ...
+func (s *Section) GetBody(ctx context.Context) (string, error) {
+	err := s.Load(ctx)
+	if err != nil {
+		return "", err
+	}
+	b, err := json.Marshal(s)
+	return string(b), err
 }
 
 // Load ...
@@ -71,16 +106,6 @@ func (s *Section) handlerText(rawText string) string {
 	return text
 }
 
-// GetPre ...
-func (s *Section) GetPre(context.Context) base.Sectioner {
-	return s.pre
-}
-
-// GetNext ...
-func (s *Section) GetNext(context.Context) base.Sectioner {
-	return s.next
-}
-
 // SetPre ...
 func (s *Section) SetPre(ctx context.Context, pre base.Sectioner) {
 	s.pre = pre
@@ -89,26 +114,6 @@ func (s *Section) SetPre(ctx context.Context, pre base.Sectioner) {
 // SetNext ...
 func (s *Section) SetNext(ctx context.Context, next base.Sectioner) {
 	s.next = next
-}
-
-// GetCatalog ...
-func (s *Section) GetCatalog(context.Context) base.Cataloger {
-	return s.catalog
-}
-
-// GetIndex ...
-func (s *Section) GetIndex(context.Context) int {
-	return s.Index
-}
-
-// GetBody ...
-func (s *Section) GetBody(ctx context.Context) (string, error) {
-	err := s.Load(ctx)
-	if err != nil {
-		return "", err
-	}
-	b, err := json.Marshal(s)
-	return string(b), err
 }
 
 // SetCatalog ...

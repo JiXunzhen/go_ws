@@ -21,14 +21,25 @@ const (
 // Catalog ...
 type Catalog struct {
 	request  *http.Request
-	sections []base.Sectioner
+	sections map[int]base.Sectioner
 	bookName string
 	client   *http.Client
+	newest   int
 }
 
 // Count ...
-func (c *Catalog) Count(_ context.Context) int {
-	return len(c.sections)
+func (c *Catalog) Count() int {
+	return c.newest
+}
+
+// GetBookName ...
+func (c *Catalog) GetBookName() string {
+	return c.bookName
+}
+
+// List ...
+func (c *Catalog) List() []base.Sectioner {
+	return nil
 }
 
 // Get ...
@@ -58,12 +69,11 @@ func (c *Catalog) Flush(ctx context.Context, withoutCache bool) error {
 
 	// refresh section
 	if withoutCache {
-		c.sections = []base.Sectioner{}
+		c.sections = map[int]base.Sectioner{}
 	}
-	startIndex := len(c.sections)
 
 	doc.Find("#list").Children().Children().Each(func(i int, s *goquery.Selection) {
-		if i < startIndex {
+		if _, ok := c.sections[i]; ok {
 			return
 		}
 		if s.Children() == nil {
@@ -80,39 +90,110 @@ func (c *Catalog) Flush(ctx context.Context, withoutCache bool) error {
 			// log
 			return
 		}
-		c.sections = append(c.sections, NewFromURL(ctx, html, uri, c.bookName, c, i))
+		c.sections[i] = NewFromURL(ctx, html, uri, c.bookName, c, i)
+		c.newest = i
 	})
-	for i, j := startIndex, startIndex+1; j < len(c.sections); i, j = j, j+1 {
-		c.sections[i].SetNext(ctx, c.sections[j])
-		c.sections[j].SetPre(ctx, c.sections[i])
-	}
+	c.flushLink(ctx)
 	return nil
 }
 
 // Save ...
 func (c *Catalog) Save(ctx context.Context, start, end int, source base.NovelSource) error {
-	remaining := c.sections[start:end]
-	fails := []int{}
+	if end <= start {
+		return nil
+	}
+
+	fails := make([]int, 0, end-start)
+	for i := start; i < end; i++ {
+		fails = append(fails, i)
+	}
+
 	for i := 0; i < base.SaveRetry; i++ {
-		fails = source.Save(ctx, c.bookName, remaining)
+		remain := make(map[int]base.Sectioner, len(fails))
+		for _, fail := range fails {
+			remain[fail] = c.sections[fail]
+		}
+		fails = source.Save(ctx, c.bookName, remain)
 		if len(fails) == 0 {
 			break
-		}
-		remaining = make([]base.Sectioner, 0, len(fails))
-		for _, fail := range fails {
-			remaining = append(remaining, c.sections[fail])
 		}
 	}
 
 	if len(fails) != 0 {
 		return fmt.Errorf("sections not saved: %v", fails)
-
 	}
 
 	return nil
 }
 
-// LoadFromSource 必须在Flush后使用
+// Load ...
+func (c *Catalog) Load(ctx context.Context, start, end int) error {
+	fails := make([]int, 0, end-start)
+	for i := start; i < end; i++ {
+		fails = append(fails, i)
+	}
+	for i := 0; i < base.LoadRetry; i++ {
+		remain := make(map[int]base.Sectioner, len(fails))
+		for _, fail := range fails {
+			remain[fail] = c.sections[i]
+		}
+		fails = c.stepLoad(ctx, remain)
+		if len(fails) == 0 {
+			break
+		}
+	}
+	if len(fails) > 0 {
+		return fmt.Errorf("sections not loaded: %v", fails)
+	}
+	return nil
+}
+
+func (c *Catalog) stepLoad(ctx context.Context, sections map[int]base.Sectioner) (fails []int) {
+	sectionChan := make(chan base.Sectioner)
+	failChan := make(chan int)
+
+	finished := &sync.WaitGroup{}
+	finished.Add(LoadConcurrent)
+
+	// go for work
+	for i := 0; i < LoadConcurrent; i++ {
+		go func(i int) {
+			defer finished.Done()
+
+			for section := range sectionChan {
+				err := section.Load(ctx)
+				if err != nil {
+					// NOTE log err
+					failChan <- section.GetIndex()
+				}
+
+				// sleep for 0.5s
+				time.Sleep(500 * time.Millisecond)
+			}
+		}(i)
+	}
+	// fail collect
+	go func() {
+		for index := range failChan {
+			fails = append(fails, index)
+		}
+	}()
+
+	// send works
+	for _, section := range sections {
+		sectionChan <- section
+	}
+	close(sectionChan)
+
+	// wait for work
+	finished.Wait()
+
+	// handle fails
+	close(failChan)
+	return
+}
+
+// LoadFromSource ...
 func (c *Catalog) LoadFromSource(ctx context.Context, source base.NovelSource) error {
 	bodies, err := source.Load(ctx, c.bookName)
 	if err != nil {
@@ -126,86 +207,41 @@ func (c *Catalog) LoadFromSource(ctx context.Context, source base.NovelSource) e
 		}
 		c.UpdateSection(ctx, section)
 	}
+	c.flushLink(ctx)
 	return nil
 }
 
 // UpdateSection ...
 func (c *Catalog) UpdateSection(ctx context.Context, section base.Sectioner) error {
-	index := section.GetIndex(ctx)
+	index := section.GetIndex()
 	if index >= len(c.sections) {
 		return errors.New("out of section range")
 	}
 
 	section.SetCatalog(ctx, c)
-	if index > 0 {
-		section.SetPre(ctx, c.sections[index-1])
-		c.sections[index-1].SetNext(ctx, section)
+	if old, ok := c.sections[index]; ok {
+		section.SetPre(ctx, old.GetPre())
+		section.SetNext(ctx, old.GetNext())
 	}
-	if index < len(c.sections)-1 {
-		section.SetNext(ctx, c.sections[index+1])
-		c.sections[index+1].SetPre(ctx, section)
+	if index > c.newest {
+		c.newest = index
 	}
 	return nil
 }
 
-// Load ...
-func (c *Catalog) Load(ctx context.Context, start, end int) error {
-	errs := c.stepLoad(ctx, c.sections[start:end])
-	_ = errs
-	return nil
-}
-
-func (c *Catalog) stepLoad(ctx context.Context, sections []base.Sectioner) error {
-	sectionChan := make(chan base.Sectioner)
-	errChan := make(chan error)
-
-	errs := make([]error, 0, len(sections))
-	finished := &sync.WaitGroup{}
-	finished.Add(LoadConcurrent)
-
-	// go for work
-	for i := 0; i < LoadConcurrent; i++ {
-		go func(i int) {
-			defer finished.Done()
-
-			for section := range sectionChan {
-				err := section.Load(ctx)
-				if err != nil {
-					errChan <- fmt.Errorf("index: %d, %v", section.GetIndex(ctx), err)
-				}
-
-				// sleep for 0.5s
-				time.Sleep(500 * time.Millisecond)
-			}
-		}(i)
-	}
-	// err collect
-	go func() {
-		for err := range errChan {
-			errs = append(errs, err)
+func (c *Catalog) flushLink(ctx context.Context) {
+	var pre base.Sectioner
+	for i := 0; i < len(c.sections); i++ {
+		cur, ok := c.sections[i]
+		if !ok {
+			continue
 		}
-	}()
-
-	// send works
-	for _, section := range sections {
-		sectionChan <- section
+		if pre != nil {
+			pre.SetNext(ctx, cur)
+			cur.SetPre(ctx, pre)
+		}
+		pre = cur
 	}
-	close(sectionChan)
-
-	// wait for work
-	finished.Wait()
-
-	// handle errs
-	close(errChan)
-	if len(errs) > 0 {
-		return fmt.Errorf("%v", errs)
-	}
-	return nil
-}
-
-// GetBookName ...
-func (c *Catalog) GetBookName() string {
-	return c.bookName
 }
 
 // NewCatalog ...
@@ -214,6 +250,7 @@ func NewCatalog(ctx context.Context, req *http.Request, bookName string) (base.C
 		request:  req,
 		bookName: bookName,
 		client:   &http.Client{},
+		sections: make(map[int]base.Sectioner),
 	}
 	err := c.Flush(ctx, false)
 	return c, err
