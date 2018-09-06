@@ -3,4 +3,4 @@
 .idea
 .envrc
 .rsync_ignore
-
+bin
