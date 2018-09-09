@@ -71,10 +71,11 @@ func handleList() error {
 	step := 0
 	for _, section := range cataloger.List() {
 		fmt.Printf("%d.%s\t", section.GetIndex(), section.GetName())
+		step++
 		if step == 2 {
+			step = 0
 			fmt.Println()
 		}
-		step++
 	}
 	return nil
 }

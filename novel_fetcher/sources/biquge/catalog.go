@@ -39,7 +39,13 @@ func (c *Catalog) GetBookName() string {
 
 // List ...
 func (c *Catalog) List() []base.Sectioner {
-	return nil
+	sections := make([]base.Sectioner, 0, c.newest)
+	for i := 0; i < c.newest; i++ {
+		if s, ok := c.sections[i]; ok {
+			sections = append(sections, s)
+		}
+	}
+	return sections
 }
 
 // Get ...
